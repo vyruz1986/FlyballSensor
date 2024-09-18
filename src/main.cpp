@@ -52,15 +52,15 @@ void setup()
    pinMode(iLightsDataPin, OUTPUT);
 
    // Configure pins for 74HC166
-   pinMode(iLatchPin, OUTPUT);
-   pinMode(iClockPin, OUTPUT);
-   pinMode(iDataInPin, INPUT_PULLDOWN);
+   // pinMode(iLatchPin, OUTPUT);
+   // pinMode(iClockPin, OUTPUT);
+   // pinMode(iDataInPin, INPUT_PULLDOWN);
 
    // Configure pins for SD Card
-   pinMode(iSDdata0Pin, INPUT_PULLUP);
-   pinMode(iSDdata1Pin, INPUT_PULLUP);
-   pinMode(iSDcmdPin, INPUT_PULLUP);
-   pinMode(iSDdetectPin, INPUT_PULLUP);
+   // pinMode(iSDdata0Pin, INPUT_PULLUP);
+   // pinMode(iSDdata1Pin, INPUT_PULLUP);
+   // pinMode(iSDcmdPin, INPUT_PULLUP);
+   // pinMode(iSDdetectPin, INPUT_PULLUP);
 
    // Configure LCD pins
    pinMode(iLCDData4Pin, OUTPUT);
@@ -77,11 +77,12 @@ void setup()
    attachInterrupt(digitalPinToInterrupt(iS2Pin), Sensor2Wrapper, CHANGE);
 #endif
 
-   // Configure Laser output pin
+   // Configure Laser pins
    pinMode(iLaserOutputPin, OUTPUT);
+   pinMode(iLaserTriggerPin, INPUT_PULLUP);
 
    // Configure GPS PPS pin
-   pinMode(iGPSppsPin, INPUT_PULLDOWN);
+   // pinMode(iGPSppsPin, INPUT_PULLDOWN);
 
    // Print SW version
    Serial.printf("Firmware version: %s\r\n", FW_VER);
@@ -91,13 +92,13 @@ void setup()
 
    // Initialize LightsController class
    xTaskCreatePinnedToCore(
-      Core1Lights,
-      "Lights",
-      8192,
-      NULL,
-      1,
-      &taskLights,
-      1);
+       Core1Lights,
+       "Lights",
+       8192,
+       NULL,
+       1,
+       &taskLights,
+       1);
 
    // Initialize LCDController class with lcd1 and lcd2 objects
    LCDController.init(&lcd, &lcd2);
@@ -116,20 +117,20 @@ void setup()
    GPSHandler.init(iGPSrxPin);
 
    // SD card init
-   if (digitalRead(iSDdetectPin) == LOW)
-      SDcardController.init();
-   else
-      Serial.println("SD Card not inserted!");
+   // if (digitalRead(iSDdetectPin) == LOW)
+   //    SDcardController.init();
+   // else
+   //    Serial.println("SD Card not inserted!");
 
    // Initialize RaceHandler class with S1 and S2 pins
    xTaskCreatePinnedToCore(
-      Core1Race,
-      "Race",
-      16384,
-      NULL,
-      1,
-      &taskRace,
-      1);
+       Core1Race,
+       "Race",
+       16384,
+       NULL,
+       1,
+       &taskRace,
+       1);
 
 #ifdef WiFiON
    // Setup AP
@@ -149,7 +150,8 @@ void setup()
    // OTA setup
    ArduinoOTA.setPassword(strAPPass.c_str());
    ArduinoOTA.setPort(3232);
-   ArduinoOTA.onStart([](){
+   ArduinoOTA.onStart([]()
+                      {
       String type;
       if (ArduinoOTA.getCommand() == U_FLASH)
          type = "Firmware";
@@ -157,10 +159,12 @@ void setup()
          type = "Filesystem";
       Serial.println("\n" + type + " update initiated.");
       LCDController.FirmwareUpdateInit(); });
-   ArduinoOTA.onEnd([](){ 
+   ArduinoOTA.onEnd([]()
+                    { 
       Serial.println("\nUpdate completed.\r\n");
       LCDController.FirmwareUpdateSuccess(); });
-   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total){
+   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                         {
       uint16_t iProgressPercentage = (progress / (total / 100));
       if (uiLastProgress != iProgressPercentage)
       {
@@ -171,7 +175,8 @@ void setup()
          LCDController.FirmwareUpdateProgress(sProgressPercentage);
          uiLastProgress = iProgressPercentage;
       } });
-   ArduinoOTA.onError([](ota_error_t error){
+   ArduinoOTA.onError([](ota_error_t error)
+                      {
       Serial.printf("Error[%u]: ", error);
       LCDController.FirmwareUpdateError();
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
@@ -216,7 +221,7 @@ void loop()
       BatterySensor.CheckBatteryVoltage();
 
       // Check SD card slot (card inserted / removed)
-      SDcardController.CheckSDcardSlot(iSDdetectPin);
+      // SDcardController.CheckSDcardSlot(iSDdetectPin);
    }
 
    // Check for serial events
@@ -502,116 +507,127 @@ void HandleSerialCommands()
 
 void HandleRemoteAndButtons()
 {
-   byDataIn = 0;
-   digitalWrite(iLatchPin, LOW);
-   digitalWrite(iClockPin, LOW);
-   digitalWrite(iClockPin, HIGH);
-   digitalWrite(iLatchPin, HIGH);
-   for (uint8_t i = 0; i < 8; ++i)
+   // Handle laser output
+   digitalWrite(iLaserOutputPin, !digitalRead(iLaserTriggerPin));
+
+   // Handle side switch button
+   if (digitalRead(SideSwitch.Pin) == LOW && millis() - SideSwitch.LastTriggerTime > SideSwitch.CoolDownTime)
    {
-      byDataIn |= digitalRead(iDataInPin) << (7 - i);
-      digitalWrite(iClockPin, LOW);
-      digitalWrite(iClockPin, HIGH);
+      SideSwitch.LastTriggerTime = millis();
+      ESP_LOGI(__FILE__, "Switching sides!");
+      RaceHandler.ToggleRunDirection();
    }
-   // It's assumed that only one button can be pressed at the same time, therefore any multiple high states are treated as false read and ingored
-   if (byDataIn != 0 && byDataIn != 1 && byDataIn != 2 && byDataIn != 4 && byDataIn != 8 && byDataIn != 16 && byDataIn != 32 && byDataIn != 64 && byDataIn != 128)
-   {
-      // log_d("Unknown buttons data --> Ignored");
-      byDataIn = 0;
-   }
-   // Check if the switch/button changed, due to noise or pressing:
-   if (byDataIn != byLastFlickerableState)
-   {
-      // reset the debouncing timer
-      llLastDebounceTime = millis();
-      // save the the last flickerable state
-      byLastFlickerableState = byDataIn;
-   }
-   if ((byLastStadyState != byDataIn) && ((millis() - llLastDebounceTime) > DEBOUNCE_DELAY))
-   {
-      if (byDataIn != 0)
-      {
-         iLastActiveBit = log2(byDataIn & -byDataIn);
-         // log_d("byDataIn is: %i, iLastActiveBit is: %i", byDataIn, iLastActiveBit);
-      }
-      // whatever the reading is at, it's been there for longer than the debounce
-      // delay, so take it as the actual current state:
-      // if the button state has changed:
-      if (bitRead(byLastStadyState, iLastActiveBit) == LOW && bitRead(byDataIn, iLastActiveBit) == HIGH)
-      {
-         llPressedTime[iLastActiveBit] = millis();
-         // log_d("The button is pressed: %lld", llPressedTime[iLastActiveBit]);
-      }
-      else if (bitRead(byLastStadyState, iLastActiveBit) == HIGH && bitRead(byDataIn, iLastActiveBit) == LOW)
-      {
-         llReleasedTime[iLastActiveBit] = millis();
-         // log_d("The button is released: %lld", llReleasedTime[iLastActiveBit]);
-      }
-      // save the the last state
-      byLastStadyState = byDataIn;
-      long long llPressDuration = (llReleasedTime[iLastActiveBit] - llPressedTime[iLastActiveBit]);
-      if (llPressDuration > 0)
-      {
-         // Action not dependent on short/long button press
-         if (iLastActiveBit == 1) // Race start/stop button (remote D0 output)
-            StartStopRace();
-         else if (iLastActiveBit == 2) // Race reset button (remote D1 output)
-            ResetRace();
-         // Actions for SHORT button press
-         if (llPressDuration <= SHORT_PRESS_TIME)
-         {
-            log_d("%s SHORT press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
-            if (iLastActiveBit == 3) // Dog 1 fault RC button
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(1);
-               else
-                  RaceHandler.SetDogFault(0);
-            else if (iLastActiveBit == 6) // Dog 2 fault RC button
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(2);
-               else
-                  RaceHandler.SetDogFault(1);
-            else if (iLastActiveBit == 5) // Dog 3 fault RC button
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(3);
-               else
-                  RaceHandler.SetDogFault(2);
-            else if (iLastActiveBit == 4) // Dog 4 fault RC button
-               if (RaceHandler.RaceState == RaceHandler.RESET)
-                  RaceHandler.SetNumberOfDogs(4);
-               else
-                  RaceHandler.SetDogFault(3);
-            else if (iLastActiveBit == 0 && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)) // Mode button - accuracy change
-               RaceHandler.ToggleAccuracy();
-            else if (iLastActiveBit == 7 && !bLaserActive && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)) // Laser activation
-            {
-               digitalWrite(iLaserOutputPin, HIGH);
-               bLaserActive = true;
-               log_i("Turn Laser ON.");
-            }
-         }
-         // Actions for LONG button press
-         else if (llPressDuration > SHORT_PRESS_TIME)
-         {
-            log_d("%s LONG press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
-            if (iLastActiveBit == 3) // Dog 1 fault RC button - toggling reruns off/on
-               RaceHandler.ToggleRerunsOffOn(2);
-            else if (iLastActiveBit == 6 && RaceHandler.RaceState == RaceHandler.RESET) // Dog 2 fault RC button - toggling starting sequence NAFA / FCI
-               LightsController.ToggleStartingSequence();
-            else if (iLastActiveBit == 0) // Mode button - side switch
-               RaceHandler.ToggleRunDirection();
-            else if (iLastActiveBit == 7 && RaceHandler.RaceState == RaceHandler.RESET) // Laster button - Wifi Off
-               ToggleWifi();
-         }
-      }
-   }
-   // Laser deativation
-   if ((bLaserActive) && ((millis() - llReleasedTime[7] > iLaserOnTime * 1000) || RaceHandler.RaceState == RaceHandler.STARTING || RaceHandler.RaceState == RaceHandler.RUNNING))
-   {
-      digitalWrite(iLaserOutputPin, LOW);
-      bLaserActive = false;
-      log_i("Turn Laser OFF.");
-   }
+
+   // byDataIn = 0;
+   // digitalWrite(iLatchPin, LOW);
+   // digitalWrite(iClockPin, LOW);
+   // digitalWrite(iClockPin, HIGH);
+   // digitalWrite(iLatchPin, HIGH);
+   // for (uint8_t i = 0; i < 8; ++i)
+   // {
+   //    byDataIn |= digitalRead(iDataInPin) << (7 - i);
+   //    digitalWrite(iClockPin, LOW);
+   //    digitalWrite(iClockPin, HIGH);
+   // }
+   // // It's assumed that only one button can be pressed at the same time, therefore any multiple high states are treated as false read and ingored
+   // if (byDataIn != 0 && byDataIn != 1 && byDataIn != 2 && byDataIn != 4 && byDataIn != 8 && byDataIn != 16 && byDataIn != 32 && byDataIn != 64 && byDataIn != 128)
+   // {
+   //    // log_d("Unknown buttons data --> Ignored");
+   //    byDataIn = 0;
+   // }
+   // // Check if the switch/button changed, due to noise or pressing:
+   // if (byDataIn != byLastFlickerableState)
+   // {
+   //    // reset the debouncing timer
+   //    llLastDebounceTime = millis();
+   //    // save the the last flickerable state
+   //    byLastFlickerableState = byDataIn;
+   // }
+   // if ((byLastStadyState != byDataIn) && ((millis() - llLastDebounceTime) > DEBOUNCE_DELAY))
+   // {
+   //    if (byDataIn != 0)
+   //    {
+   //       iLastActiveBit = log2(byDataIn & -byDataIn);
+   //       // log_d("byDataIn is: %i, iLastActiveBit is: %i", byDataIn, iLastActiveBit);
+   //    }
+   //    // whatever the reading is at, it's been there for longer than the debounce
+   //    // delay, so take it as the actual current state:
+   //    // if the button state has changed:
+   //    if (bitRead(byLastStadyState, iLastActiveBit) == LOW && bitRead(byDataIn, iLastActiveBit) == HIGH)
+   //    {
+   //       llPressedTime[iLastActiveBit] = millis();
+   //       // log_d("The button is pressed: %lld", llPressedTime[iLastActiveBit]);
+   //    }
+   //    else if (bitRead(byLastStadyState, iLastActiveBit) == HIGH && bitRead(byDataIn, iLastActiveBit) == LOW)
+   //    {
+   //       llReleasedTime[iLastActiveBit] = millis();
+   //       // log_d("The button is released: %lld", llReleasedTime[iLastActiveBit]);
+   //    }
+   //    // save the the last state
+   //    byLastStadyState = byDataIn;
+   //    long long llPressDuration = (llReleasedTime[iLastActiveBit] - llPressedTime[iLastActiveBit]);
+   //    if (llPressDuration > 0)
+   //    {
+   //       // Action not dependent on short/long button press
+   //       if (iLastActiveBit == 1) // Race start/stop button (remote D0 output)
+   //          StartStopRace();
+   //       else if (iLastActiveBit == 2) // Race reset button (remote D1 output)
+   //          ResetRace();
+   //       // Actions for SHORT button press
+   //       if (llPressDuration <= SHORT_PRESS_TIME)
+   //       {
+   //          log_d("%s SHORT press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
+   //          if (iLastActiveBit == 3) // Dog 1 fault RC button
+   //             if (RaceHandler.RaceState == RaceHandler.RESET)
+   //                RaceHandler.SetNumberOfDogs(1);
+   //             else
+   //                RaceHandler.SetDogFault(0);
+   //          else if (iLastActiveBit == 6) // Dog 2 fault RC button
+   //             if (RaceHandler.RaceState == RaceHandler.RESET)
+   //                RaceHandler.SetNumberOfDogs(2);
+   //             else
+   //                RaceHandler.SetDogFault(1);
+   //          else if (iLastActiveBit == 5) // Dog 3 fault RC button
+   //             if (RaceHandler.RaceState == RaceHandler.RESET)
+   //                RaceHandler.SetNumberOfDogs(3);
+   //             else
+   //                RaceHandler.SetDogFault(2);
+   //          else if (iLastActiveBit == 4) // Dog 4 fault RC button
+   //             if (RaceHandler.RaceState == RaceHandler.RESET)
+   //                RaceHandler.SetNumberOfDogs(4);
+   //             else
+   //                RaceHandler.SetDogFault(3);
+   //          else if (iLastActiveBit == 0 && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)) // Mode button - accuracy change
+   //             RaceHandler.ToggleAccuracy();
+   //          else if (iLastActiveBit == 7 && !bLaserActive && (RaceHandler.RaceState == RaceHandler.STOPPED || RaceHandler.RaceState == RaceHandler.RESET)) // Laser activation
+   //          {
+   //             digitalWrite(iLaserOutputPin, HIGH);
+   //             bLaserActive = true;
+   //             log_i("Turn Laser ON.");
+   //          }
+   //       }
+   //       // Actions for LONG button press
+   //       else if (llPressDuration > SHORT_PRESS_TIME)
+   //       {
+   //          log_d("%s LONG press detected: %lldms", GetButtonString(iLastActiveBit).c_str(), llPressDuration);
+   //          if (iLastActiveBit == 3) // Dog 1 fault RC button - toggling reruns off/on
+   //             RaceHandler.ToggleRerunsOffOn(2);
+   //          else if (iLastActiveBit == 6 && RaceHandler.RaceState == RaceHandler.RESET) // Dog 2 fault RC button - toggling starting sequence NAFA / FCI
+   //             LightsController.ToggleStartingSequence();
+   //          else if (iLastActiveBit == 0) // Mode button - side switch
+   //             RaceHandler.ToggleRunDirection();
+   //          else if (iLastActiveBit == 7 && RaceHandler.RaceState == RaceHandler.RESET) // Laster button - Wifi Off
+   //             ToggleWifi();
+   //       }
+   //    }
+   // }
+   // // Laser deativation
+   // if ((bLaserActive) && ((millis() - llReleasedTime[7] > iLaserOnTime * 1000) || RaceHandler.RaceState == RaceHandler.STARTING || RaceHandler.RaceState == RaceHandler.RUNNING))
+   // {
+   //    digitalWrite(iLaserOutputPin, LOW);
+   //    bLaserActive = false;
+   //    log_i("Turn Laser OFF.");
+   // }
 }
 
 /// <summary>
@@ -662,9 +678,9 @@ void Core1Race(void *parameter)
    RaceHandler.init(iS1Pin, iS2Pin);
    for (;;)
    {
-   #if Simulate
+#if Simulate
       Simulator.Main();
-   #endif
+#endif
       RaceHandler.Main();
       vTaskDelay(1 / portTICK_PERIOD_MS);
    }
